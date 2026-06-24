@@ -2,10 +2,52 @@ const express = require('express');
 const cors = require('cors');
 const http = require('http');
 const { WebSocketServer } = require('ws');
+const crypto = require('crypto');
 
 const app = express();
 app.use(cors({ origin: '*' }));
 app.use(express.json());
+
+// --- AUTH ---
+const nonces = new Map();
+const tokens = new Map();
+
+function generateToken() {
+  return 'pvt_' + crypto.randomBytes(32).toString('hex');
+}
+
+app.get('/auth/nonce', (req, res) => {
+  const { wallet } = req.query;
+  if (!wallet) return res.status(400).json({ error: 'wallet required' });
+  const nonce = crypto.randomUUID();
+  nonces.set(wallet, { nonce, created: Date.now() });
+  res.json({ nonce });
+});
+
+app.post('/auth/login', (req, res) => {
+  const { wallet, signature, message } = req.body || {};
+  if (!wallet) return res.status(400).json({ success: false, error: 'wallet required' });
+  const token = generateToken();
+  tokens.set(token, { wallet, created: Date.now() });
+  nonces.delete(wallet);
+  res.json({ success: true, token });
+});
+
+app.post('/auth/logout', (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '');
+  tokens.delete(token);
+  res.json({ success: true });
+});
+
+app.get('/auth/verify', (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '');
+  const data = tokens.get(token);
+  if (data) {
+    res.json({ valid: true, wallet: data.wallet });
+  } else {
+    res.json({ valid: false });
+  }
+});
 
 const PORT = process.env.PORT || 3001;
 
