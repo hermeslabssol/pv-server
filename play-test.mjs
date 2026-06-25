@@ -13,6 +13,7 @@ let gotGameState = false;
 let gotZoneStates = false;
 let gotPlayerCount = false;
 let movementEcho = false;
+let gotNewPlayerMe = false;
 
 async function http(path, opts = {}) {
   const res = await fetch(HTTP + path, opts);
@@ -29,16 +30,28 @@ async function http(path, opts = {}) {
   if (!nonce) { log('  ❌ NO NONCE — auth broken'); process.exit(1); }
   log('  ✅ nonce:', nonce);
 
-  log('\n=== STEP 2: AUTH LOGIN (sign + submit) ===');
+  log('\n=== STEP 2: AUTH LOGIN (exact frontend shape: walletAddress field) ===');
+  const message = `Sign this message to verify ownership of wallet and login to Pumpville.\n\nNonce: ${nonce}`;
   const loginRes = await http('/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ wallet: WALLET, signature: 'simulated_signature_bytes', message: `Sign in to Pumpville\nNonce: ${nonce}` }),
+    body: JSON.stringify({ walletAddress: WALLET, signature: 'YmFzZTY0c2ln', message, clientData: {} }),
   });
-  log('  status', loginRes.status, JSON.stringify(loginRes.json || loginRes.text));
+  log('  status', loginRes.status, JSON.stringify(loginRes.json || loginRes.text).slice(0, 120));
   const token = loginRes.json?.token;
-  if (!loginRes.json?.success || !token) { log('  ❌ LOGIN FAILED'); process.exit(1); }
-  log('  ✅ token:', token.slice(0, 24) + '...');
+  if (!loginRes.json?.success || !token) { log('  ❌ LOGIN FAILED — frontend would throw "Authentication failed on server"'); process.exit(1); }
+  log('  ✅ token:', token.slice(0, 28) + '...');
+
+  // STEP 2b: mirror the frontend's isTokenValid() — atob(token.split('.')[1]).exp
+  log('\n=== STEP 2b: isTokenValid() (the gate that froze entry) ===');
+  let tokenValid = false;
+  try {
+    const seg = token.split('.')[1];
+    const payload = JSON.parse(Buffer.from(seg, 'base64').toString('binary'));
+    tokenValid = payload.exp && Date.now() < payload.exp * 1000;
+    log('  decoded payload exp:', new Date(payload.exp * 1000).toISOString().slice(0, 10), '| valid:', tokenValid ? '✅ TRUE (token NOT wiped, entry proceeds)' : '❌ FALSE');
+  } catch (e) { log('  ❌ atob/parse threw —', e.message, '— isTokenValid would wipe token + return false → FROZEN'); }
+  if (!tokenValid) { log('  ❌ ENTRY WOULD FREEZE HERE'); process.exit(1); }
 
   log('\n=== STEP 3: USER INFO ===');
   const info = await http(`/user/info?wallet=${WALLET}`);
@@ -69,6 +82,7 @@ async function http(path, opts = {}) {
         // STEP 8: zone change
         setTimeout(() => { log('=== STEP 8: zone_change -> fishing ==='); ws.send(JSON.stringify({ type: 'zone_change', zone: 'fishing' })); }, 2400);
       }
+      if (t === 'new_player' && msg.wallet_address === WALLET) { gotNewPlayerMe = true; log('     -> new_player (ME) ✅ — client clears retry + spawns local player'); }
       if (t === 'zone_player_states' || t === 'zone_players') gotZoneStates = true;
       if (t === 'player_count') gotPlayerCount = true;
       if (t === 'chat_message' && /play-test/.test(JSON.stringify(msg))) log('     -> chat echoed back ✅');
@@ -87,7 +101,8 @@ async function http(path, opts = {}) {
   log('\n================ SUMMARY ================');
   log('  auth nonce+login : ✅');
   log('  WS open          :', seen.size > 0 ? '✅' : '❌');
-  log('  game_state recv  :', gotGameState ? '✅' : '❌  <-- THE GAME WONT ENTER WITHOUT THIS');
+  log('  game_state recv  :', gotGameState ? '✅' : '❌');
+  log('  new_player(ME)   :', gotNewPlayerMe ? '✅  <-- SPAWNS CHARACTER' : '❌  <-- CHARACTER WONT SPAWN');
   log('  zone_player_states:', gotZoneStates ? '✅' : '❌');
   log('  player_count     :', gotPlayerCount ? '✅' : '⚠️');
   log('  movement broadcast:', movementEcho ? '✅' : '⚠️');

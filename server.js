@@ -1117,7 +1117,8 @@ app.post('/surfboard/activate', (req, res) => {
 // --- BROADCAST ---
 
 app.get('/broadcast/current', (req, res) => {
-  res.json(broadcastMessage);
+  // Frontend reads result.active — never return bare null or it throws.
+  res.json(broadcastMessage || { active: false, message: null });
 });
 
 // --- FRENZY ---
@@ -1323,6 +1324,20 @@ wss.on('connection', (ws) => {
         avatarParts: AVATAR_PARTS,
         avatarSets: AVATAR_SETS,
       }));
+
+      // CRITICAL: the client (React shell + Godot) waits for a `new_player`
+      // message whose `wallet_address` === its own wallet to spawn the local
+      // player and dismiss the "Spawning character..." splash. Without this it
+      // retries wallet_connected forever. Send it directly on THIS socket
+      // (works whether React's WS or Godot's WS sent wallet_connected) and
+      // broadcast to the zone so others spawn the new remote player.
+      const newPlayerMsg = {
+        type: 'new_player',
+        wallet_address: playerWallet,
+        ...playerStateObj(p),
+      };
+      ws.send(JSON.stringify(newPlayerMsg));
+      broadcast(newPlayerMsg, p.zone);
 
       // Notify zone
       broadcast({ type: 'zone_presence', wallet: playerWallet, username: p.username, action: 'joined', zone: p.zone }, p.zone);
