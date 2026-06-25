@@ -1418,6 +1418,13 @@ wss.on('connection', (ws) => {
       const remoteNewPlayer = { type: 'new_player', ...originalPlayerObj(p), position: { x: p.x, y: p.y } };
       broadcast(remoteNewPlayer, p.zone, playerWallet);
 
+      // 5) PROACTIVELY push quest + login state (original pushes these on connect; the
+      //    quest panel otherwise shows "Loading quests..." if its own request races the
+      //    WS handshake).
+      const q = ensureQuests(playerWallet);
+      ws.send(JSON.stringify({ type: 'quest_data', questType: 'daily', quests: q.daily }));
+      ws.send(JSON.stringify({ type: 'quest_data', questType: 'beginner', quests: q.beginner }));
+
       sendPlayerCount();
       return;
     }
