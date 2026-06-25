@@ -8,6 +8,20 @@ const app = express();
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 
+// The frontend sends `walletAddress` everywhere; many handlers read `wallet`.
+// Normalize both directions on body + query so every route just works.
+app.use((req, res, next) => {
+  if (req.body && typeof req.body === 'object') {
+    if (req.body.walletAddress && !req.body.wallet) req.body.wallet = req.body.walletAddress;
+    if (req.body.wallet && !req.body.walletAddress) req.body.walletAddress = req.body.wallet;
+  }
+  if (req.query) {
+    if (req.query.walletAddress && !req.query.wallet) req.query.wallet = req.query.walletAddress;
+    if (req.query.wallet && !req.query.walletAddress) req.query.walletAddress = req.query.wallet;
+  }
+  next();
+});
+
 // --- AUTH ---
 const nonces = new Map();
 const tokens = new Map();
@@ -806,7 +820,7 @@ app.get('/user/equip-hotkey', (req, res) => {
     hk[slot] = item;
     playerHotkeys.set(wallet, hk);
   }
-  res.json({ ok: true, hotkeys: hk });
+  res.json({ success: true, ok: true, hotkeys: hk });
 });
 
 app.post('/user/equip-hotkey', (req, res) => {
@@ -817,7 +831,7 @@ app.post('/user/equip-hotkey', (req, res) => {
     hk[slot] = item;
     playerHotkeys.set(wallet, hk);
   }
-  res.json({ ok: true, hotkeys: hk });
+  res.json({ success: true, ok: true, hotkeys: hk });
 });
 
 // Unequip hotkey
@@ -827,7 +841,7 @@ app.get('/user/unequip-hotkey', (req, res) => {
   const hk = playerHotkeys.get(wallet) || {};
   if (slot) delete hk[slot];
   playerHotkeys.set(wallet, hk);
-  res.json({ ok: true, hotkeys: hk });
+  res.json({ success: true, ok: true, hotkeys: hk });
 });
 
 app.post('/user/unequip-hotkey', (req, res) => {
@@ -836,7 +850,7 @@ app.post('/user/unequip-hotkey', (req, res) => {
   const hk = playerHotkeys.get(wallet) || {};
   if (slot) delete hk[slot];
   playerHotkeys.set(wallet, hk);
-  res.json({ ok: true, hotkeys: hk });
+  res.json({ success: true, ok: true, hotkeys: hk });
 });
 
 // Select pet
@@ -848,7 +862,7 @@ app.post('/user/select-pet', (req, res) => {
   if (pet && !PET_TYPES.includes(pet)) return res.json({ error: 'invalid pet' });
   p.pet = pet || null;
   if (p.zone) broadcastZoneStates(p.zone);
-  res.json({ ok: true, pet: p.pet });
+  res.json({ success: true, ok: true, pet: p.pet });
 });
 
 // Equip rod
@@ -860,7 +874,7 @@ app.post('/user/equip-rod', (req, res) => {
   p.equipped.rod = rod || null;
   playerEquipCount.set(wallet, (playerEquipCount.get(wallet) || 0) + 1);
   updateQuestProgress(wallet, 'equip', 1);
-  res.json({ ok: true, equipped: p.equipped });
+  res.json({ success: true, ok: true, equipped: p.equipped });
 });
 
 // Equip bait
@@ -870,7 +884,7 @@ app.post('/user/equip-bait', (req, res) => {
   const p = getPlayer(wallet);
   if (!p) return res.json({ error: 'player not found' });
   p.equipped.bait = bait || null;
-  res.json({ ok: true, equipped: p.equipped });
+  res.json({ success: true, ok: true, equipped: p.equipped });
 });
 
 // Equip weapon
@@ -883,7 +897,7 @@ app.post('/user/equip-weapon', (req, res) => {
   playerEquipCount.set(wallet, (playerEquipCount.get(wallet) || 0) + 1);
   updateQuestProgress(wallet, 'equip', 1);
   if (p.zone) broadcastZoneStates(p.zone);
-  res.json({ ok: true, equipped: p.equipped });
+  res.json({ success: true, ok: true, equipped: p.equipped });
 });
 
 // Equip pickaxe
@@ -896,7 +910,7 @@ app.post('/user/equip-pickaxe', (req, res) => {
   playerEquipCount.set(wallet, (playerEquipCount.get(wallet) || 0) + 1);
   updateQuestProgress(wallet, 'equip', 1);
   if (p.zone) broadcastZoneStates(p.zone);
-  res.json({ ok: true, equipped: p.equipped });
+  res.json({ success: true, ok: true, equipped: p.equipped });
 });
 
 // Equip shovel
@@ -909,7 +923,7 @@ app.post('/user/equip-shovel', (req, res) => {
   playerEquipCount.set(wallet, (playerEquipCount.get(wallet) || 0) + 1);
   updateQuestProgress(wallet, 'equip', 1);
   if (p.zone) broadcastZoneStates(p.zone);
-  res.json({ ok: true, equipped: p.equipped });
+  res.json({ success: true, ok: true, equipped: p.equipped });
 });
 
 // Equip net
@@ -922,7 +936,7 @@ app.post('/user/equip-net', (req, res) => {
   playerEquipCount.set(wallet, (playerEquipCount.get(wallet) || 0) + 1);
   updateQuestProgress(wallet, 'equip', 1);
   if (p.zone) broadcastZoneStates(p.zone);
-  res.json({ ok: true, equipped: p.equipped });
+  res.json({ success: true, ok: true, equipped: p.equipped });
 });
 
 // --- ZONES ---
@@ -966,7 +980,7 @@ app.post('/shop/purchase', (req, res) => {
   if (p.coins < totalCost) return res.json({ error: 'not enough coins' });
   p.coins -= totalCost;
   addItem(wallet, item, qty);
-  res.json({ ok: true, coins: p.coins, item, quantity: qty });
+  res.json({ success: true, ok: true, coins: p.coins, item, quantity: qty });
 });
 
 app.post('/shop/claim', (req, res) => {
@@ -977,7 +991,7 @@ app.post('/shop/claim', (req, res) => {
   claims.push(item);
   playerClaims.set(wallet, claims);
   addItem(wallet, item, 1);
-  res.json({ ok: true, item });
+  res.json({ success: true, ok: true, item });
 });
 
 app.get('/shop/claims', (req, res) => {
@@ -1030,7 +1044,7 @@ app.post('/marketplace/list', (req, res) => {
     status: 'active',
     createdAt: Date.now(),
   });
-  res.json({ ok: true, listingId: id });
+  res.json({ success: true, ok: true, listingId: id });
 });
 
 app.post('/marketplace/buy', (req, res) => {
@@ -1055,7 +1069,7 @@ app.post('/marketplace/buy', (req, res) => {
     price: listing.price,
     soldAt: Date.now(),
   });
-  res.json({ ok: true, item: listing.item, quantity: listing.quantity });
+  res.json({ success: true, ok: true, item: listing.item, quantity: listing.quantity });
 });
 
 app.post('/marketplace/cancel', (req, res) => {
@@ -1067,7 +1081,7 @@ app.post('/marketplace/cancel', (req, res) => {
   if (listing.status !== 'active') return res.json({ error: 'listing not active' });
   listing.status = 'cancelled';
   addItem(wallet, listing.item, listing.quantity);
-  res.json({ ok: true });
+  res.json({ success: true, ok: true });
 });
 
 app.get('/marketplace/my-listings', (req, res) => {
@@ -1133,7 +1147,7 @@ app.post('/crafting/craft', (req, res) => {
   addItem(wallet, recipe.result, recipe.resultQty);
   playerCraftCount.set(wallet, (playerCraftCount.get(wallet) || 0) + 1);
   updateQuestProgress(wallet, 'craft', 1);
-  res.json({ ok: true, crafted: recipe.result, quantity: recipe.resultQty });
+  res.json({ success: true, ok: true, crafted: recipe.result, quantity: recipe.resultQty });
 });
 
 app.post('/crafting/learn-recipe', (req, res) => {
@@ -1145,7 +1159,7 @@ app.post('/crafting/learn-recipe', (req, res) => {
   if (!removeItem(wallet, 'recipe_card', 1)) return res.json({ error: 'no recipe card' });
   const known = ensureRecipes(wallet);
   known.add(recipeId);
-  res.json({ ok: true, recipeId, recipeName: recipe.name });
+  res.json({ success: true, ok: true, recipeId, recipeName: recipe.name });
 });
 
 // --- FISHING ---
@@ -1176,7 +1190,7 @@ app.post('/fishing-booth/redeem', (req, res) => {
   if (inv.fish[fishId] <= 0) delete inv.fish[fishId];
   const coins = fish.value * qty;
   addCoins(wallet, coins);
-  res.json({ ok: true, coins, total: getPlayer(wallet).coins });
+  res.json({ success: true, ok: true, coins, total: getPlayer(wallet).coins });
 });
 
 // --- SURFBOARD ---
@@ -1187,7 +1201,7 @@ app.post('/surfboard/activate', (req, res) => {
   if (!hasItem(wallet, 'surfboard', 1)) return res.json({ error: 'no surfboard' });
   const duration = 5 * 60 * 1000; // 5 min
   playerSurfboard.set(wallet, { active: true, expiresAt: Date.now() + duration });
-  res.json({ ok: true, expiresAt: Date.now() + duration });
+  res.json({ success: true, ok: true, expiresAt: Date.now() + duration });
 });
 
 // --- BROADCAST ---
@@ -1251,7 +1265,7 @@ app.post('/admin/verify', (req, res) => {
   if (adminKey === 'pumpville_admin_2026') {
     const p = getPlayer(wallet);
     if (p) p.isAdmin = true;
-    return res.json({ ok: true, isAdmin: true });
+    return res.json({ success: true, ok: true, isAdmin: true });
   }
   res.json({ ok: false, isAdmin: false });
 });
@@ -1273,7 +1287,7 @@ app.post('/gifts/coins', (req, res) => {
   msgs.push({ from: wallet, fromName: sender.username, type: 'gift_coins', amount, timestamp: Date.now() });
   playerMessages.set(targetWallet, msgs);
   sendTo(targetWallet, { type: 'game_event', event: { id: 'gift_received', name: `${sender.username} sent you ${amount} coins!` } });
-  res.json({ ok: true, coins: sender.coins });
+  res.json({ success: true, ok: true, coins: sender.coins });
 });
 
 app.post('/gifts/items', (req, res) => {
@@ -1287,7 +1301,7 @@ app.post('/gifts/items', (req, res) => {
   msgs.push({ from: wallet, fromName: sender ? sender.username : 'Unknown', type: 'gift_item', item, quantity: qty, timestamp: Date.now() });
   playerMessages.set(targetWallet, msgs);
   sendTo(targetWallet, { type: 'game_event', event: { id: 'gift_received', name: `${sender ? sender.username : 'Someone'} sent you ${qty}x ${item}!` } });
-  res.json({ ok: true });
+  res.json({ success: true, ok: true });
 });
 
 // --- CONSUMABLES ---
@@ -1306,7 +1320,7 @@ app.get('/consumables/inventory', (req, res) => {
 
 // --- Catch-all: return ok so game client doesn't choke ---
 app.all('*', (req, res) => {
-  res.json({ ok: true });
+  res.json({ success: true, ok: true });
 });
 
 // ===========================================================================
