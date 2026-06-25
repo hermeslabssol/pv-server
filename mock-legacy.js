@@ -51,5 +51,35 @@
 
   try { window.phantom = { solana: provider }; } catch (e) {}
   try { window.solana = provider; } catch (e) {}
+
+  // Headless-only: AudioWorklet module loading fails in headless chrome
+  // ("Unable to load a worklet's module"), which can abort Godot's audio init
+  // before the player spawns. Stub it so the spawn path proceeds. This injection
+  // is test-only; the real deployed index.html has none of this.
+  try {
+    if (typeof AudioWorklet !== 'undefined' && AudioWorklet.prototype) {
+      AudioWorklet.prototype.addModule = function () { return Promise.resolve(); };
+    }
+    const proto = (typeof BaseAudioContext !== 'undefined' && BaseAudioContext.prototype)
+      || (typeof AudioContext !== 'undefined' && AudioContext.prototype);
+    if (proto) {
+      Object.defineProperty(proto, 'audioWorklet', {
+        configurable: true,
+        get() { return { addModule: () => Promise.resolve() }; },
+      });
+    }
+    if (typeof AudioWorkletNode !== 'undefined') {
+      const RealNode = AudioWorkletNode;
+      window.AudioWorkletNode = function (ctx) {
+        try { return new RealNode(...arguments); } catch (e) {
+          const g = ctx.createGain ? ctx.createGain() : { connect() {}, disconnect() {} };
+          g.port = { postMessage() {}, onmessage: null, start() {}, close() {} };
+          g.parameters = { get: () => ({ value: 0 }) };
+          return g;
+        }
+      };
+    }
+  } catch (e) {}
+
   return 'LEGACY_MOCK:' + address;
 })();

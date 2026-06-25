@@ -682,6 +682,34 @@ app.get('/', (req, res) => {
 
 // --- USER ---
 
+// Init (loadPreferences). Frontend POSTs {walletAddress} and REQUIRES
+// {success:true, sprite, pet, settings, username, isNewUser} or it throws
+// "Init returned failure". Default real players to the universal 'sprite_villager'
+// so the Godot client always has a renderable player sprite.
+app.post('/user/init', (req, res) => {
+  const body = req.body || {};
+  const wallet = body.walletAddress || body.wallet;
+  if (!wallet) return res.status(400).json({ success: false, error: 'wallet required' });
+  const p = requirePlayer(wallet);
+  ensureQuests(wallet);
+  ensureInventory(wallet);
+  ensureLogin(wallet);
+  const isNewUser = !p._initialized;
+  if (isNewUser && (!p.sprite || NPC_SPRITES.includes(p.sprite))) p.sprite = 'sprite_villager';
+  p._initialized = true;
+  p.lastSeen = Date.now();
+  res.json({
+    success: true,
+    sprite: p.sprite || 'sprite_villager',
+    pet: p.pet || '',
+    username: p.username && p.username !== 'Player' ? p.username : null,
+    settings: {},
+    isNewUser,
+    coins: p.coins,
+    wallet,
+  });
+});
+
 // User info (create if new)
 app.get('/user/info', (req, res) => {
   const { wallet } = req.query;

@@ -13,7 +13,17 @@ const tag = (m) => { console.log(m); };
   const browser = await chromium.launch({
     headless: true,
     proxy: { server: PROXY },
-    args: ['--no-sandbox', '--disable-blink-features=AutomationControlled'],
+    args: [
+      '--no-sandbox',
+      '--disable-blink-features=AutomationControlled',
+      '--headless=new',
+      '--autoplay-policy=no-user-gesture-required',
+      '--use-fake-device-for-media-stream',
+      '--enable-features=SharedArrayBuffer',
+      '--ignore-gpu-blocklist',
+      '--use-gl=angle',
+      '--use-angle=swiftshader',
+    ],
   });
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   // Inject the mock wallet BEFORE any page script runs (correct wallet-standard timing).
@@ -55,8 +65,12 @@ const tag = (m) => { console.log(m); };
   tag('  shot 3: after connect+sign');
 
   // Give the game time to authenticate + open WS + spawn
-  tag('\n=== WAIT FOR WORLD ENTRY (20s) ===');
-  await page.waitForTimeout(20000);
+  tag('\n=== WAIT FOR WORLD ENTRY (35s) ===');
+  for (let i = 0; i < 7; i++) {
+    await page.waitForTimeout(5000);
+    const spawned = logs.some(l => /local_player_spawned|hiding splash|DONE\.|inGame|player spawned/i.test(l));
+    if (spawned) { tag('  ✅ local_player_spawned detected at ~' + ((i + 1) * 5) + 's'); break; }
+  }
   await page.screenshot({ path: 'C:/Users/79150/AppData/Local/Temp/pt-4-world.png' });
   tag('  shot 4: world (final)');
 
@@ -86,6 +100,10 @@ const tag = (m) => { console.log(m); };
   tag('  frozen/hang signal   : ' + (frozen ? '⚠️ present' : 'none'));
   tag('  auth token stored    : ' + (state.token ? '✅ (' + (state.token.includes('3 segs') ? 'JWT-shaped' : 'check') + ')' : '❌'));
   tag('=========================================');
+
+  // Dump full console for inspection
+  fs.writeFileSync('C:/Users/79150/AppData/Local/Temp/pt-console.log', logs.join('\n'));
+  tag('  full console -> pt-console.log (' + logs.length + ' lines)');
 
   await browser.close();
   process.exit(0);
