@@ -1290,7 +1290,13 @@ wss.on('connection', (ws) => {
   ws.on('message', (raw) => {
     let msg;
     try { msg = JSON.parse(raw); } catch { return; }
-    const { type } = msg;
+    let { type } = msg;
+    // CRITICAL: the Godot iframe WS identifies itself with a message that has NO
+    // `type` field — it sends { connection_type:"godot", token, sprite, pet }.
+    // If we drop no-type messages, Godot's connection never gets game_state/
+    // new_player -> the local player never spawns -> infinite loading at "Entering".
+    // Treat the Godot identify (or any token-bearing no-type msg) as wallet_connected.
+    if (!type && (msg.connection_type || msg.token)) type = 'wallet_connected';
     if (!type) return;
 
     // ---- wallet_connected ----
