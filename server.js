@@ -1295,10 +1295,12 @@ wss.on('connection', (ws) => {
 
     // ---- wallet_connected ----
     if (type === 'wallet_connected') {
-      // The React shell sends ONLY { token, sprite, pet } — no wallet field.
-      // The wallet identity lives in the JWT we issued (payload.wallet/.sub).
-      // Accept an explicit wallet too (Godot client / our tooling).
-      playerWallet = msg.wallet || msg.walletAddress || null;
+      // TWO different clients send this with DIFFERENT shapes:
+      //  - React shell WS:  { token, sprite, pet }            -> wallet is inside the JWT
+      //  - Godot iframe WS: { wallet_address: <addr>, ... }   -> wallet via set_wallet (snake_case, NO token)
+      // If we don't read the snake_case `wallet_address`, the Godot connection never
+      // registers, never gets new_player, never spawns -> INFINITE LOADING at "Entering".
+      playerWallet = msg.wallet || msg.walletAddress || msg.wallet_address || null;
       if (!playerWallet && msg.token) {
         try {
           const payload = JSON.parse(Buffer.from(String(msg.token).split('.')[1], 'base64').toString());
