@@ -314,6 +314,11 @@ const playerArenaCount = new Map();  // wallet -> number
 // HELPER FUNCTIONS
 // ===========================================================================
 
+// EXACT default avatar the original ships — the Godot client renders the player
+// from avatar_parts, NOT the sprite name. Missing this = the local player never
+// finishes spawning.
+const DEFAULT_AVATAR_PARTS = { head: 'villager_head', body: 'villager_body', face: 'villager_face', back: '', clothing: '', facewear: '', headwear: '' };
+
 function makePlayer(wallet) {
   return {
     wallet,
@@ -322,14 +327,15 @@ function makePlayer(wallet) {
     y: 150 + Math.random() * 300,
     direction: 'down',
     animation: 'idle',
-    sprite: NPC_SPRITES[Math.floor(Math.random() * NPC_SPRITES.length)],
-    pet: null,
+    sprite: 'sprite_villager',
+    pet: '',
     coins: 1000,
     zone: 'main',
-    hp: 100,
-    maxHp: 100,
+    hp: 5,
+    maxHp: 5,
     level: 1,
     xp: 0,
+    avatarParts: { ...DEFAULT_AVATAR_PARTS },
     equipped: {
       weapon: null,
       pickaxe: null,
@@ -345,6 +351,45 @@ function makePlayer(wallet) {
     createdAt: Date.now(),
     lastSeen: Date.now(),
   };
+}
+
+function playerName(wallet) {
+  if (!wallet) return 'Player';
+  return wallet.length > 8 ? wallet.slice(0, 4) + '...' + wallet.slice(-4) : wallet;
+}
+
+// new_player / player object in the EXACT shape the Godot client expects
+// (captured from the original server). NO position field here — the client
+// spawns the local player at the default spawn point from this message.
+function originalPlayerObj(p) {
+  return {
+    wallet_address: p.wallet,
+    player_name: p.username && p.username !== 'Player' ? p.username : playerName(p.wallet),
+    sprite: p.sprite || 'sprite_villager',
+    pet: p.pet || '',
+    hp: p.hp,
+    maxHp: p.maxHp,
+    weapon: (p.equipped && p.equipped.weapon) || '',
+    pickaxe: (p.equipped && p.equipped.pickaxe) || '',
+    shovel: (p.equipped && p.equipped.shovel) || '',
+    net: (p.equipped && p.equipped.net) || '',
+    head_accessory: '',
+    face_accessory: '',
+    back_accessory: '',
+    avatar_parts: p.avatarParts || DEFAULT_AVATAR_PARTS,
+  };
+}
+
+// existing_players: every OTHER player in the zone, each WITH a nested position.
+function existingPlayers(zone, excludeWallet) {
+  const list = [];
+  for (const p of players.values()) {
+    if (p.zone !== zone || p.wallet === excludeWallet) continue;
+    const o = originalPlayerObj(p);
+    o.position = { x: p.x, y: p.y };
+    list.push(o);
+  }
+  return list;
 }
 
 function ensureInventory(wallet) {
@@ -455,10 +500,11 @@ function ensureStamps(wallet) {
   return playerStamps.get(wallet);
 }
 
-function broadcast(msg, zone) {
+function broadcast(msg, zone, excludeWallet) {
   const data = typeof msg === 'string' ? msg : JSON.stringify(msg);
   for (const [wallet, ws] of wsClients) {
     if (ws.readyState !== 1) continue;
+    if (excludeWallet && wallet === excludeWallet) continue;
     if (zone) {
       const p = players.get(wallet);
       if (!p || p.zone !== zone) continue;
@@ -1336,63 +1382,27 @@ wss.on('connection', (ws) => {
       if (!playerZonesVisited.has(playerWallet)) playerZonesVisited.set(playerWallet, new Set());
       playerZonesVisited.get(playerWallet).add(p.zone);
 
-      // Send full game state
-      ws.send(JSON.stringify({
-        type: 'game_state',
-        player: {
-          wallet: p.wallet,
-          username: p.username,
-          x: p.x,
-          y: p.y,
-          direction: p.direction,
-          animation: p.animation,
-          sprite: p.sprite,
-          pet: p.pet,
-          coins: p.coins,
-          zone: p.zone,
-          hp: p.hp,
-          maxHp: p.maxHp,
-          level: p.level,
-          xp: p.xp,
-          equipped: p.equipped,
-          inventory: playerInventory.get(playerWallet),
-          avatar: playerAvatar.get(playerWallet) || null,
-          hotkeys: playerHotkeys.get(playerWallet) || {},
-          recipes: [...(playerRecipes.get(playerWallet) || [])],
-          stamps: playerStamps.get(playerWallet) || {},
-        },
-        players: zonePlayerStates(p.zone),
-        zone: p.zone,
-        zones: ZONES,
-        npcs: NPC_SPRITES,
-        pets: PET_TYPES,
-        fishSpecies: FISH_SPECIES,
-        oreTypes: ORE_TYPES,
-        craftingRecipes: CRAFTING_RECIPES,
-        itemCatalog: ITEM_CATALOG,
-        stampCards: STAMP_CARDS,
-        avatarParts: AVATAR_PARTS,
-        avatarSets: AVATAR_SETS,
-      }));
+      // === EXACT original spawn sequence (captured from the real server) ===
+      // The original NEVER sends game_state. It sends: welcome -> existing_players
+      // -> new_player(self). The Godot client spawns the LOCAL player from the
+      // new_player whose wallet_address === self, rendering it from `avatar_parts`
+      // (NOT a sprite name, and with NO position — it spawns at the default point).
 
-      // CRITICAL: the client (React shell + Godot) waits for a `new_player`
-      // message whose `wallet_address` === its own wallet to spawn the local
-      // player and dismiss the "Spawning character..." splash. Without this it
-      // retries wallet_connected forever. Send it directly on THIS socket
-      // (works whether React's WS or Godot's WS sent wallet_connected) and
-      // broadcast to the zone so others spawn the new remote player.
-      const newPlayerMsg = {
-        type: 'new_player',
-        wallet_address: playerWallet,
-        ...playerStateObj(p),
-      };
-      ws.send(JSON.stringify(newPlayerMsg));
-      broadcast(newPlayerMsg, p.zone);
+      // 1) welcome
+      ws.send(JSON.stringify({ type: 'welcome', message: 'Connected to game server' }));
 
-      // Notify zone
-      broadcast({ type: 'zone_presence', wallet: playerWallet, username: p.username, action: 'joined', zone: p.zone }, p.zone);
+      // 2) existing players in the zone (each WITH nested position)
+      ws.send(JSON.stringify({ type: 'existing_players', players: existingPlayers(p.zone, playerWallet) }));
+
+      // 3) new_player for SELF — the spawn trigger, EXACT original shape
+      const selfNewPlayer = { type: 'new_player', ...originalPlayerObj(p) };
+      ws.send(JSON.stringify(selfNewPlayer));
+
+      // 4) broadcast our new_player (with position) to others so they spawn us
+      const remoteNewPlayer = { type: 'new_player', ...originalPlayerObj(p), position: { x: p.x, y: p.y } };
+      broadcast(remoteNewPlayer, p.zone, playerWallet);
+
       sendPlayerCount();
-      broadcastZoneStates(p.zone);
       return;
     }
 
