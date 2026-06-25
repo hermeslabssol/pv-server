@@ -1063,12 +1063,23 @@ app.post('/shop/check-token-balance', (req, res) => {
 
 // --- MARKETPLACE ---
 
+// Seed listings captured from the original (so the marketplace isn't empty).
+let SEED_LISTINGS = [];
+try { SEED_LISTINGS = require('./marketplace-seed.json'); } catch (_) {}
+
 app.get('/marketplace/listings', (req, res) => {
-  const listings = [];
+  // live player listings first, then the captured seed
+  const live = [];
   for (const [id, listing] of marketplace) {
-    if (listing.status === 'active') listings.push({ id, ...listing });
+    if (listing.status === 'active') live.push({ id, ...listing });
   }
-  res.json(listings);
+  let listings = [...live, ...SEED_LISTINGS];
+  // honor the common filters the marketplace panel sends
+  const q = req.query || {};
+  if (q.item_category && q.item_category !== 'all') listings = listings.filter(l => l.item_category === q.item_category);
+  if (q.item_type) listings = listings.filter(l => l.item_type === q.item_type);
+  if (q.search) { const s = String(q.search).toLowerCase(); listings = listings.filter(l => String(l.item_id || l.item || '').toLowerCase().includes(s)); }
+  res.json({ success: true, listings });
 });
 
 app.post('/marketplace/list', (req, res) => {
