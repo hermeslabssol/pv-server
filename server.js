@@ -1267,14 +1267,28 @@ wss.on('connection', (ws) => {
 
     // ---- wallet_connected ----
     if (type === 'wallet_connected') {
-      playerWallet = msg.wallet;
+      // The React shell sends ONLY { token, sprite, pet } — no wallet field.
+      // The wallet identity lives in the JWT we issued (payload.wallet/.sub).
+      // Accept an explicit wallet too (Godot client / our tooling).
+      playerWallet = msg.wallet || msg.walletAddress || null;
+      if (!playerWallet && msg.token) {
+        try {
+          const payload = JSON.parse(Buffer.from(String(msg.token).split('.')[1], 'base64').toString());
+          playerWallet = payload.wallet || payload.sub || null;
+        } catch (_) {}
+      }
       if (!playerWallet) return;
+      // Honor the sprite/pet the client chose at connect time.
+      const wantSprite = msg.sprite;
+      const wantPet = msg.pet;
 
       let p = players.get(playerWallet);
       if (!p) {
         p = makePlayer(playerWallet);
         players.set(playerWallet, p);
       }
+      if (wantSprite) p.sprite = wantSprite;
+      if (wantPet !== undefined && wantPet !== null) p.pet = wantPet;
       p.lastSeen = Date.now();
       wsClients.set(playerWallet, ws);
 
