@@ -1422,8 +1422,17 @@ wss.on('connection', (ws) => {
       //    quest panel otherwise shows "Loading quests..." if its own request races the
       //    WS handshake).
       const q = ensureQuests(playerWallet);
-      ws.send(JSON.stringify({ type: 'quest_data', questType: 'daily', quests: q.daily }));
-      ws.send(JSON.stringify({ type: 'quest_data', questType: 'beginner', quests: q.beginner }));
+      const pushQuests = () => {
+        if (ws.readyState !== 1) return;
+        ws.send(JSON.stringify({ type: 'quest_data', questType: 'daily', quests: q.daily }));
+        ws.send(JSON.stringify({ type: 'quest_data', questType: 'beginner', quests: q.beginner }));
+        ws.send(JSON.stringify({ type: 'beginner_quest_state_update', quests: q.beginner, finalClaimed: q.beginnerFinalClaimed || false }));
+      };
+      // push now + re-push after the React quest panel has mounted its listener
+      pushQuests();
+      setTimeout(pushQuests, 1500);
+      setTimeout(pushQuests, 3500);
+      setTimeout(pushQuests, 6000);
 
       sendPlayerCount();
       return;
