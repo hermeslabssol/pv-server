@@ -1432,6 +1432,28 @@ wss.on('connection', (ws) => {
       return;
     }
 
+    // ---- cosmetic relays (match original: re-broadcast the event to the zone
+    //      with the sender's wallet so other players see sprite/pet/avatar/emote
+    //      changes). The original relays these verbatim; we do the same and also
+    //      persist the obvious ones on the player object. ----
+    const RELAY = {
+      sprite_changed: 1, pet_changed: 1, avatar_part_equipped: 1, avatar_set_equipped: 1,
+      weapon_change_broadcast: 1, play_emote: 1, name_change: 1, accessory_equipped: 1,
+      pickaxe_equipped: 1, shovel_equipped: 1, net_equipped: 1,
+    };
+    if (RELAY[type]) {
+      // persist the common cosmetic fields so existing_players/new_player reflect them
+      if (msg.sprite) player.sprite = msg.sprite;
+      if (type === 'pet_changed' && (msg.pet !== undefined)) player.pet = msg.pet || '';
+      if (type === 'avatar_part_equipped' && msg.slot_type) {
+        if (!playerAvatar.has(playerWallet)) playerAvatar.set(playerWallet, { parts: {}, set: null });
+        playerAvatar.get(playerWallet).parts[msg.slot_type] = msg.part_id || '';
+      }
+      const out = { ...msg, wallet_address: playerWallet };
+      broadcast(out, player.zone, playerWallet);
+      return;
+    }
+
     // ---- chat_message ----
     if (type === 'chat_message') {
       const text = (msg.message || '').slice(0, 500);
