@@ -237,13 +237,48 @@ const DAILY_QUEST_POOL = [
   { id: 'arena_fight', name: 'Arena Warrior', description: 'Enter the arena once.', type: 'arena', target: 1, reward: { coins: 75 } },
 ];
 
-const BEGINNER_QUESTS = [
-  { id: 'bq1', name: 'First Steps', description: 'Change your username.', type: 'username', target: 1, reward: { coins: 100 }, order: 1 },
-  { id: 'bq2', name: 'Fashion Show', description: 'Change your sprite.', type: 'change_sprite', target: 1, reward: { coins: 50 }, order: 2 },
-  { id: 'bq3', name: 'Explorer', description: 'Visit 3 different zones.', type: 'zone_visit', target: 3, reward: { coins: 150 }, order: 3 },
-  { id: 'bq4', name: 'Angler Apprentice', description: 'Catch your first fish.', type: 'fishing', target: 1, reward: { coins: 100 }, order: 4 },
-  { id: 'bq5', name: 'Social Starter', description: 'Send 3 chat messages.', type: 'chat', target: 3, reward: { coins: 200 }, order: 5 },
-];
+// Beginner quests are a CHAIN tied to specific Godot map NPCs (matches the original).
+// Each step puts a "!" QuestIndicator over its NPC; the client shows "Talk to <NPC>".
+const BEGINNER_NPC_NAMES = {
+  mayorpump: 'Mayor Pump', smithfox: 'Foxsmith', scoutbobo: 'Bobo',
+  fisherpepe: 'Fisherman Pepe', baristamichi: 'Barista Michi', knuckles: 'Knuckles',
+  warriorshib: 'Warrior Shib', miner_entrance: 'Miner Mole', explorertoto: 'Explorer Toto',
+};
+const BEGINNER_NPC_CHAIN = ['mayorpump', 'smithfox', 'scoutbobo', 'fisherpepe', 'baristamichi', 'knuckles', 'warriorshib', 'miner_entrance', 'explorertoto'];
+const BEGINNER_QUESTS = BEGINNER_NPC_CHAIN.map((npc, i) => ({
+  id: 'beginner_' + (i + 1),
+  quest_id: 'beginner_' + (i + 1),
+  npc_id: npc,
+  sequence_order: i + 1,
+  order: i + 1,
+  name: 'Meet ' + BEGINNER_NPC_NAMES[npc],
+  description: 'Talk to ' + BEGINNER_NPC_NAMES[npc] + ' and accept the quest.',
+  reward: { coins: 100 },
+}));
+
+// Beginner quest list WITH per-step status, derived from the player's beginnerStep.
+function beginnerList(q) {
+  const step = q.beginnerStep || 0;
+  return BEGINNER_QUESTS.map((bq, i) => ({
+    ...bq,
+    status: i < step ? 'completed' : (i === step ? 'available' : 'locked'),
+    completed: i < step,
+    claimed: i < step,
+  }));
+}
+function beginnerCurrentNpc(q) {
+  const step = q.beginnerStep || 0;
+  return step < BEGINNER_QUESTS.length ? BEGINNER_QUESTS[step].npc_id : null;
+}
+function beginnerStateMsg(q) {
+  const npc = beginnerCurrentNpc(q);
+  return {
+    type: 'beginner_quest_state_update',
+    npc_id: npc,
+    quest_status: npc ? 'available' : 'completed',
+    all_complete: !npc,
+  };
+}
 
 const DAILY_LOGIN_REWARDS = [
   { day: 1, reward: { coins: 50 } },
@@ -473,20 +508,15 @@ function ensureQuests(wallet) {
   const today = todayStr();
   let q = playerQuests.get(wallet);
   if (!q || q.dailyDate !== today) {
-    const beginner = q ? q.beginner : BEGINNER_QUESTS.map(bq => ({
-      ...bq,
-      progress: 0,
-      completed: false,
-      claimed: false,
-    }));
     q = {
       daily: generateDailyQuests(),
       dailyDate: today,
-      beginner,
+      beginnerStep: q ? (q.beginnerStep || 0) : 0,
       beginnerFinalClaimed: q ? q.beginnerFinalClaimed || false : false,
     };
     playerQuests.set(wallet, q);
   }
+  if (q.beginnerStep === undefined) q.beginnerStep = 0;
   return q;
 }
 
@@ -594,22 +624,22 @@ function updateQuestProgress(wallet, questType, amount = 1) {
   const q = playerQuests.get(wallet);
   if (!q) return;
   let changed = false;
-  const allQuests = [...q.daily, ...q.beginner];
-  for (const quest of allQuests) {
+  // Only DAILY quests track type-based progress; beginner quests advance by talking
+  // to their NPC (handled separately).
+  for (const quest of q.daily) {
     if (quest.completed || quest.type !== questType) continue;
     quest.progress = Math.min(quest.progress + amount, quest.target);
     changed = true;
     if (quest.progress >= quest.target) {
       quest.completed = true;
       sendTo(wallet, { type: 'quest_completed', questId: quest.id, reward: quest.reward });
-      // Auto-grant reward
       const p = players.get(wallet);
       if (p && quest.reward.coins) addCoins(wallet, quest.reward.coins);
       if (quest.reward.item) addItem(wallet, quest.reward.item, quest.reward.qty || 1);
     }
   }
   if (changed) {
-    sendTo(wallet, { type: 'quest_progress_update', daily: q.daily, beginner: q.beginner });
+    sendTo(wallet, { type: 'quest_progress_update', daily: q.daily, beginner: beginnerList(q) });
   }
 }
 
@@ -1424,9 +1454,10 @@ wss.on('connection', (ws) => {
       const q = ensureQuests(playerWallet);
       const pushQuests = () => {
         if (ws.readyState !== 1) return;
-        ws.send(JSON.stringify({ type: 'quest_data', questType: 'daily', quests: q.daily }));
-        ws.send(JSON.stringify({ type: 'quest_data', questType: 'beginner', quests: q.beginner }));
-        ws.send(JSON.stringify({ type: 'beginner_quest_state_update', quests: q.beginner, finalClaimed: q.beginnerFinalClaimed || false }));
+        ws.send(JSON.stringify({ type: 'quest_data', quests: q.daily, stamps: 0 }));
+        ws.send(JSON.stringify({ type: 'quest_data', questType: 'beginner', quests: beginnerList(q) }));
+        // drives the "!" QuestIndicator over the current beginner NPC + "Talk to X"
+        ws.send(JSON.stringify(beginnerStateMsg(q)));
       };
       // push now + re-push after the React quest panel has mounted its listener
       pushQuests();
@@ -1719,12 +1750,25 @@ wss.on('connection', (ws) => {
     // ---- get_all_beginner_quests_v2 ----
     if (type === 'get_all_beginner_quests_v2') {
       const q = ensureQuests(playerWallet);
-      ws.send(JSON.stringify({
-        type: 'quest_data',
-        questType: 'beginner',
-        quests: q.beginner,
-        finalClaimed: q.beginnerFinalClaimed,
-      }));
+      ws.send(JSON.stringify({ type: 'quest_data', questType: 'beginner', quests: beginnerList(q), finalClaimed: q.beginnerFinalClaimed }));
+      ws.send(JSON.stringify(beginnerStateMsg(q)));
+      return;
+    }
+
+    // ---- beginner_quest_accept (talk to the current NPC -> advance the chain) ----
+    if (type === 'beginner_quest_accept' || type === 'beginner_quest_complete') {
+      const q = ensureQuests(playerWallet);
+      if ((q.beginnerStep || 0) < BEGINNER_QUESTS.length) {
+        const done = BEGINNER_QUESTS[q.beginnerStep];
+        q.beginnerStep = (q.beginnerStep || 0) + 1;
+        if (done.reward && done.reward.coins) addCoins(playerWallet, done.reward.coins);
+        ws.send(JSON.stringify({ type: 'beginner_quest_accepted', success: true, npc_id: done.npc_id, quest_id: done.id }));
+        ws.send(JSON.stringify({ type: 'beginner_quest_completed', npc_id: done.npc_id, quest_id: done.id, reward: done.reward }));
+      } else {
+        ws.send(JSON.stringify({ type: 'beginner_quest_accepted', success: true }));
+      }
+      ws.send(JSON.stringify({ type: 'quest_data', questType: 'beginner', quests: beginnerList(q), finalClaimed: q.beginnerFinalClaimed }));
+      ws.send(JSON.stringify(beginnerStateMsg(q)));
       return;
     }
 
@@ -1758,7 +1802,7 @@ wss.on('connection', (ws) => {
         ws.send(JSON.stringify({ type: 'error', message: 'Already claimed' }));
         return;
       }
-      const allDone = q.beginner.every(bq => bq.completed);
+      const allDone = (q.beginnerStep || 0) >= BEGINNER_QUESTS.length;
       if (!allDone) {
         ws.send(JSON.stringify({ type: 'error', message: 'Not all quests completed' }));
         return;
