@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: pumpville-backend
+    name: pv-server
     runtime: node
     plan: free
     buildCommand: npm install
