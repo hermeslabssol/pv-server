@@ -773,26 +773,28 @@ app.get('/user/info', (req, res) => {
   });
 });
 
-// Change username
+// Change username — frontend sends {walletAddress, username} and checks res.ok && i.success
 app.post('/user/change-username', (req, res) => {
-  const { wallet, username } = req.body || {};
-  if (!wallet || !username) return res.json({ error: 'wallet and username required' });
-  const p = getPlayer(wallet);
-  if (!p) return res.json({ error: 'player not found' });
-  p.username = username.slice(0, 20);
+  const body = req.body || {};
+  const wallet = body.walletAddress || body.wallet;
+  const username = body.username;
+  if (!wallet || !username) return res.status(400).json({ success: false, error: 'wallet and username required' });
+  const p = requirePlayer(wallet);
+  p.username = String(username).slice(0, 20);
   updateQuestProgress(wallet, 'username', 1);
-  res.json({ ok: true, username: p.username });
+  res.json({ success: true, username: p.username });
 });
 
-// Set initial username
+// Set initial username — same shape; the onboarding "Choose Username" dialog calls this
 app.post('/user/set-initial-username', (req, res) => {
-  const { wallet, username } = req.body || {};
-  if (!wallet || !username) return res.json({ error: 'wallet and username required' });
+  const body = req.body || {};
+  const wallet = body.walletAddress || body.wallet;
+  const username = body.username;
+  if (!wallet || !username) return res.status(400).json({ success: false, error: 'wallet and username required' });
   const p = requirePlayer(wallet);
-  if (p.username !== 'Player') return res.json({ error: 'username already set' });
-  p.username = username.slice(0, 20);
+  p.username = String(username).slice(0, 20);
   updateQuestProgress(wallet, 'username', 1);
-  res.json({ ok: true, username: p.username });
+  res.json({ success: true, username: p.username });
 });
 
 // Equip hotkey
