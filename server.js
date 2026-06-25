@@ -568,6 +568,14 @@ function sendTo(wallet, msg) {
   }
 }
 
+function onlinePlayersList() {
+  const list = [];
+  for (const p of players.values()) {
+    list.push({ wallet: p.wallet, name: p.username && p.username !== 'Player' ? p.username : playerName(p.wallet), in_portal: false });
+  }
+  return list;
+}
+
 function playerCount() {
   return players.size; // includes NPCs for lively feel
 }
@@ -701,6 +709,14 @@ function wanderNpcs() {
       p.x = 200 + Math.random() * 400;
       p.y = 150 + Math.random() * 300;
     }
+    // echo each NPC's move as player_movement so real clients render it
+    broadcast({
+      type: 'player_movement',
+      wallet_address: p.wallet,
+      position: { x: p.x, y: p.y },
+      direction: p.direction,
+      timestamp: Date.now(),
+    }, p.zone, p.wallet);
   }
   // NPC chat (rare, 2% chance per tick)
   if (Math.random() < 0.02) {
@@ -723,10 +739,6 @@ function wanderNpcs() {
       broadcast({ type: 'chat_message', ...entry }, npc.zone);
     }
   }
-  // Broadcast zone states for zones with NPCs
-  const npcZones = new Set();
-  for (const p of players.values()) if (p.isNpc) npcZones.add(p.zone);
-  for (const z of npcZones) broadcastZoneStates(z);
 }
 
 spawnNpcs();
@@ -1465,6 +1477,10 @@ wss.on('connection', (ws) => {
       setTimeout(pushQuests, 3500);
       setTimeout(pushQuests, 6000);
 
+      // 6) stamina (drives the HUD energy bar) + online players list
+      ws.send(JSON.stringify({ type: 'stamina_update', stamina: 500, max_stamina: 500, tired: false, timestamp: Date.now() }));
+      ws.send(JSON.stringify({ type: 'online_players_list', players: onlinePlayersList() }));
+
       sendPlayerCount();
       return;
     }
@@ -1484,9 +1500,16 @@ wss.on('connection', (ws) => {
     //      changes). The original relays these verbatim; we do the same and also
     //      persist the obvious ones on the player object. ----
     const RELAY = {
+      // cosmetic
       sprite_changed: 1, pet_changed: 1, avatar_part_equipped: 1, avatar_set_equipped: 1,
       weapon_change_broadcast: 1, play_emote: 1, name_change: 1, accessory_equipped: 1,
       pickaxe_equipped: 1, shovel_equipped: 1, net_equipped: 1,
+      // mechanic actions — the Godot client drives fishing/mining/digging/combat/etc.;
+      // the original simply echoes the actor's action to the zone so others see it.
+      fishing_action: 1, fishing_rod_state: 1, mining_action: 1, mining: 1,
+      digging: 1, treasure_dig: 1, chop_tree: 1, collect_stick: 1, use_item: 1,
+      attack: 1, player_attack: 1, take_damage: 1, hit_enemy: 1, surfboard_action: 1,
+      bobber_spawned: 1, bobber_removed: 1, jellyfish_boss_spawned: 1,
     };
     if (RELAY[type]) {
       // persist the common cosmetic fields so existing_players/new_player reflect them
@@ -1498,6 +1521,14 @@ wss.on('connection', (ws) => {
       }
       const out = { ...msg, wallet_address: playerWallet };
       broadcast(out, player.zone, playerWallet);
+      return;
+    }
+
+    // ---- request_resource_sync (Godot asks for the world resource snapshot on spawn;
+    //      we don't track server-authoritative resources, so ack with empty lists so
+    //      the client stops waiting and falls back to its local spawn) ----
+    if (type === 'request_resource_sync') {
+      ws.send(JSON.stringify({ type: 'resource_sync', trees: [], treasures: [], markers: [], bobbers: [] }));
       return;
     }
 
@@ -1545,26 +1576,32 @@ wss.on('connection', (ws) => {
     }
 
     // ---- player_move ----
-    if (type === 'player_move') {
-      const oldX = player.x;
-      const oldY = player.y;
-      if (typeof msg.x === 'number') player.x = msg.x;
-      if (typeof msg.y === 'number') player.y = msg.y;
+    // The Godot client sends `player_movement` with {position:{x,y}, direction,
+    // speed_mult, timestamp}. (Older alias: player_move with flat x/y.) The original
+    // ECHOES this per-player to the zone — it never sends zone_player_states (the
+    // Godot client ignores that), which is why our pushed movement was invisible.
+    if (type === 'player_movement' || type === 'player_move') {
+      const pos = msg.position || { x: msg.x, y: msg.y };
+      const oldX = player.x, oldY = player.y;
+      if (typeof pos.x === 'number') player.x = pos.x;
+      if (typeof pos.y === 'number') player.y = pos.y;
       if (msg.direction) player.direction = msg.direction;
       if (msg.animation) player.animation = msg.animation;
-      // Track distance for quests
+      player.lastSeen = Date.now();
       const dist = Math.sqrt((player.x - oldX) ** 2 + (player.y - oldY) ** 2);
       if (dist > 0) {
         playerMoveDistance.set(playerWallet, (playerMoveDistance.get(playerWallet) || 0) + dist);
-        updateQuestProgress(playerWallet, 'movement', dist);
         updateStampProgress(playerWallet, 'explorer_stamp', dist);
       }
-      // Surfboard check
-      const sb = playerSurfboard.get(playerWallet);
-      if (sb && sb.active && sb.expiresAt < Date.now()) {
-        playerSurfboard.delete(playerWallet);
-      }
-      broadcastZoneStates(player.zone);
+      // echo to the zone so others see this player move (original format)
+      broadcast({
+        type: 'player_movement',
+        wallet_address: playerWallet,
+        position: { x: player.x, y: player.y },
+        direction: msg.direction,
+        speed_mult: msg.speed_mult,
+        timestamp: msg.timestamp,
+      }, player.zone, playerWallet);
       return;
     }
 
@@ -1818,19 +1855,24 @@ wss.on('connection', (ws) => {
       return;
     }
 
-    // ---- get_daily_login_state ----
+    // ---- get_daily_login_state (original 10-field shape; our old field names
+    //      matched 0 of the client's -> DAILY UI read undefined) ----
     if (type === 'get_daily_login_state') {
       const login = ensureLogin(playerWallet);
       const today = todayStr();
       const canClaim = login.lastClaim !== today;
-      const canLootbox = login.lastLootbox !== today;
       ws.send(JSON.stringify({
         type: 'daily_login_state',
-        streak: login.streak,
-        canClaim,
-        canLootbox,
-        rewards: DAILY_LOGIN_REWARDS,
-        lastClaim: login.lastClaim,
+        current_streak: login.streak || 0,
+        longest_streak: login.longest || login.streak || 0,
+        total_logins: login.total || 0,
+        last_claim_date: login.lastClaim || null,
+        cycle_day: ((login.streak || 0) % 7) + 1,
+        highest_milestone_claimed: login.milestone || 0,
+        day3_lootbox_claimed: !!login.day3,
+        day7_lootbox_claimed: !!login.day7,
+        can_claim_today: canClaim,
+        streak_continues: true,
       }));
       return;
     }
