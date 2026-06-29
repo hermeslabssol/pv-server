@@ -280,6 +280,17 @@ function beginnerStateMsg(q) {
   };
 }
 
+// Bulk per-NPC states for the v2 "!" / post-quest indicators the Godot client (npc.gd:696) expects.
+function beginnerV2StatesMsg(q) {
+  const step = q.beginnerStep || 0;
+  const npc_states = {}, npc_all_done = {};
+  BEGINNER_NPC_CHAIN.forEach((npc, i) => {
+    npc_states[npc] = i < step ? 'completed' : (i === step ? 'available' : 'locked');
+    npc_all_done[npc] = i < step;
+  });
+  return { type: 'beginner_quests_v2_npc_states', npc_states, npc_all_done, final_reward_claimed: !!q.beginnerFinalClaimed };
+}
+
 const DAILY_LOGIN_REWARDS = [
   { day: 1, reward: { coins: 50 } },
   { day: 2, reward: { coins: 75 } },
@@ -1048,7 +1059,7 @@ app.get('/shop/token-config', (req, res) => {
         symbol: 'PUMP',
         mint: '11111111111111111111111111111111',
         decimals: 9,
-        name: 'Pumpville Token',
+        name: 'Clowder Token',
         icon: '/pump-token.png',
       },
     ],
@@ -1478,15 +1489,13 @@ wss.on('connection', (ws) => {
       const pushQuests = () => {
         if (ws.readyState !== 1) return;
         ws.send(JSON.stringify({ type: 'quest_data', quests: q.daily, stamps: 0 }));
-        ws.send(JSON.stringify({ type: 'quest_data', questType: 'beginner', quests: beginnerList(q) }));
+        ws.send(JSON.stringify({ type: 'all_beginner_quests_v2', quests: beginnerList(q), beginner_complete: (q.beginnerStep || 0) >= BEGINNER_QUESTS.length, final_reward_claimed: !!q.beginnerFinalClaimed }));
         // drives the "!" QuestIndicator over the current beginner NPC + "Talk to X"
-        ws.send(JSON.stringify(beginnerStateMsg(q)));
+        ws.send(JSON.stringify(beginnerStateMsg(q))); ws.send(JSON.stringify(beginnerV2StatesMsg(q)));
       };
       // push now + re-push after the React quest panel has mounted its listener
       pushQuests();
       setTimeout(pushQuests, 1500);
-      setTimeout(pushQuests, 3500);
-      setTimeout(pushQuests, 6000);
 
       // 6) stamina (drives the HUD energy bar) + online players list
       ws.send(JSON.stringify({ type: 'stamina_update', stamina: 500, max_stamina: 500, tired: false, timestamp: Date.now() }));
@@ -1798,8 +1807,8 @@ wss.on('connection', (ws) => {
     // ---- get_all_beginner_quests_v2 ----
     if (type === 'get_all_beginner_quests_v2') {
       const q = ensureQuests(playerWallet);
-      ws.send(JSON.stringify({ type: 'quest_data', questType: 'beginner', quests: beginnerList(q), finalClaimed: q.beginnerFinalClaimed }));
-      ws.send(JSON.stringify(beginnerStateMsg(q)));
+      ws.send(JSON.stringify({ type: 'all_beginner_quests_v2', quests: beginnerList(q), beginner_complete: (q.beginnerStep || 0) >= BEGINNER_QUESTS.length, final_reward_claimed: !!q.beginnerFinalClaimed }));
+      ws.send(JSON.stringify(beginnerStateMsg(q))); ws.send(JSON.stringify(beginnerV2StatesMsg(q)));
       return;
     }
 
@@ -1815,8 +1824,8 @@ wss.on('connection', (ws) => {
       } else {
         ws.send(JSON.stringify({ type: 'beginner_quest_accepted', success: true }));
       }
-      ws.send(JSON.stringify({ type: 'quest_data', questType: 'beginner', quests: beginnerList(q), finalClaimed: q.beginnerFinalClaimed }));
-      ws.send(JSON.stringify(beginnerStateMsg(q)));
+      ws.send(JSON.stringify({ type: 'all_beginner_quests_v2', quests: beginnerList(q), beginner_complete: (q.beginnerStep || 0) >= BEGINNER_QUESTS.length, final_reward_claimed: !!q.beginnerFinalClaimed }));
+      ws.send(JSON.stringify(beginnerStateMsg(q))); ws.send(JSON.stringify(beginnerV2StatesMsg(q)));
       return;
     }
 
